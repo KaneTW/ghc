@@ -43,6 +43,7 @@ import Util
 import FastString
 import FastStringEnv
 import ListSetOps
+import TyCon           ( isDataFamilyTyCon )
 
 import Control.Monad
 import Data.Either      ( partitionEithers, isRight, rights )
@@ -1200,14 +1201,30 @@ exports_from_avail :: Maybe (Located [LIE RdrName])
                    -> RnM (Maybe [LIE Name], [AvailInfo])
 
 exports_from_avail Nothing rdr_env _imports _this_mod
- = -- The same as (module M) where M is the current module name,
-   -- so that's how we handle it.
-   let
-       avails = [ availFromGRE gre
-                | gre <- globalRdrEnvElts rdr_env
-                , isLocalGRE gre ]
-   in
-    return (Nothing, avails)
+   -- The same as (module M) where M is the current module name,
+   -- so that's how we handle it, except we also export the data family
+   -- when a data instance is exported.
+  = do
+      let avails = [ availFromGRE gre
+                   | gre <- globalRdrEnvElts rdr_env
+                   , isLocalGRE gre ]
+
+      fixed_avails <- mapM fix_faminst avails
+
+      return (Nothing, fixed_avails)
+  where
+    -- #11164: when we define a data instance
+    -- but not data family, re-export the family
+    fix_faminst avail@(AvailTC n ns flds)
+      | isTyConName n && not (n `elem` ns)
+      = do
+          tc <- tcLookupTyCon n
+          if isDataFamilyTyCon tc
+          then return $ AvailTC n (n:ns) flds
+          else return avail
+
+    fix_faminst avail = return avail
+
 
 exports_from_avail (Just (L _ rdr_items)) rdr_env imports this_mod
   = do (ie_names, _, exports) <- foldlM do_litem emptyExportAccum rdr_items
