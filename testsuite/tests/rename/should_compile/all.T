@@ -226,3 +226,6 @@ test('T7969',
 test('T9127', normal, compile, [''])
 test('T4426', normal, compile_fail, [''])
 test('T9778', normal, compile, ['-fwarn-unticked-promoted-constructors'])
+test('T11167', normal, compile, [''])
+test('T11167_ambig', normal, compile, [''])
+

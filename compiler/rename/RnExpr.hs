@@ -45,6 +45,7 @@ import SrcLoc
 import FastString
 import Control.Monad
 import TysWiredIn       ( nilDataConName )
+import Data.Function    ( on )
 
 {-
 ************************************************************************
@@ -150,12 +151,40 @@ rnExpr (OpApp e1 op  _ e2)
         -- more, so I've removed the test.  Adding HsPars in TcGenDeriv
         -- should prevent bad things happening.
         ; fixity <- case op' of
-                     L _ (HsVar (L _ n)) -> lookupFixityRn n
-                     _                   -> return (Fixity minPrecedence InfixL)
-                                       -- c.f. lookupFixity for unbound
+                      L _ (HsVar (L _ n)) -> lookupFixityRn n
+                      L _ (HsRecFld (Unambiguous _ n)) -> lookupFixityRn n
+                      L _ (HsRecFld (Ambiguous rn _)) -> get_ambiguous_fixity rn
+                      _ -> return (Fixity minPrecedence InfixL)
+                           -- c.f. lookupFixity for unbound
 
         ; final_e <- mkOpAppRn e1' op' fixity e2'
         ; return (final_e, fv_e1 `plusFV` fv_op `plusFV` fv_e2) }
+  where
+    get_ambiguous_fixity :: RdrName -> RnM Fixity
+    get_ambiguous_fixity rdr_name = do
+      traceRn $ text "get_ambiguous_fixity" <+> ppr rdr_name
+      rdr_env <- getGlobalRdrEnv
+      let elts =  lookupGRE_RdrName rdr_name rdr_env
+      
+      fixities <- groupBy ((==) `on` snd) . zip elts
+                  <$> mapM (lookupFixityRn . gre_name) elts
+                  
+      case fixities of
+        -- There should always be at least one fixity.
+        -- Something's very wrong if there are no fixity candidates, so panic
+        [] -> panic "get_ambiguous_fixity: no candidates for a given RdrName"
+        [ (_, fix):_ ] -> return fix
+        ambigs -> addErr (ambiguous_fixity_err rdr_name ambigs)
+                  >> return (Fixity minPrecedence InfixL)
+
+    ambiguous_fixity_err rn ambigs
+      = vcat [ text "Ambiguous fixity for record field" <+> ppr rn
+             , hang (text "Conflicts: ") 2 . vcat .
+               map format_ambig $ concat ambigs ]
+
+    format_ambig (elt, fix) = ppr elt <+> text "is" <+> ppr fix
+        
+        
 
 rnExpr (NegApp e _)
   = do { (e', fv_e)         <- rnLExpr e
